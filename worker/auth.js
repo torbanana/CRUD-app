@@ -120,14 +120,28 @@ export async function endSession(db, token, { secure = true } = {}) {
 
 // ------------------------------------------------------------ request helpers
 
-/** Parse the Cookie header into a plain object. */
+/**
+ * Parse the Cookie header into a plain object.
+ *
+ * A cookie value is whatever the client sent, so it need not be valid
+ * percent-encoding -- `sid=%` makes decodeURIComponent throw. That must not
+ * become a 500: an undecodable cookie is a bad cookie, which is the same
+ * situation as no cookie at all. Keep the raw value and let the caller decide;
+ * a session token that failed to decode simply will not match a stored one.
+ */
 export function parseCookies(request) {
   const out = Object.create(null);
   for (const part of (request.headers.get('cookie') || '').split(';')) {
     const eq = part.indexOf('=');
     if (eq === -1) continue;
     const key = part.slice(0, eq).trim();
-    if (key) out[key] = decodeURIComponent(part.slice(eq + 1).trim());
+    if (!key) continue;
+    const raw = part.slice(eq + 1).trim();
+    try {
+      out[key] = decodeURIComponent(raw);
+    } catch {
+      out[key] = raw;
+    }
   }
   return out;
 }
