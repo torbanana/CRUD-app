@@ -280,29 +280,35 @@ async function handlePatchGroup(request, _env, db) {
   // Ten people who know each other don't need an admin role -- any member can
   // set the group's shared goal, the same way anyone can move a whiteboard.
   const { journeyName, journeyGoalSteps, groupName } = await readJson(request);
-  const writes = [];
+
+  // Collect the changes first and validate every field before writing any of
+  // them. Calling setMeta() while still validating would start the write
+  // immediately, so a later field failing its check would leave the earlier
+  // ones already applied behind a 400 -- a rejected request that changed the
+  // group anyway. A patch either lands whole or not at all.
+  const updates = [];
 
   if (journeyName !== undefined) {
     if (typeof journeyName !== 'string' || !journeyName.trim() || journeyName.length > 40) {
       return fail(400, 'Give the destination a name of up to 40 characters.');
     }
-    writes.push(setMeta(db, 'journey_name', journeyName.trim()));
+    updates.push(['journey_name', journeyName.trim()]);
   }
   if (groupName !== undefined) {
     if (typeof groupName !== 'string' || !groupName.trim() || groupName.length > 40) {
       return fail(400, 'Give the group a name of up to 40 characters.');
     }
-    writes.push(setMeta(db, 'group_name', groupName.trim()));
+    updates.push(['group_name', groupName.trim()]);
   }
   if (journeyGoalSteps !== undefined) {
     const goal = Number(journeyGoalSteps);
     if (!Number.isInteger(goal) || goal < 10000 || goal > 20000000) {
       return fail(400, 'Pick a group goal between 10,000 and 20,000,000 steps.');
     }
-    writes.push(setMeta(db, 'journey_goal_steps', goal));
+    updates.push(['journey_goal_steps', goal]);
   }
 
-  await Promise.all(writes);
+  await Promise.all(updates.map(([key, value]) => setMeta(db, key, value)));
   return json({ meta: await getMeta(db) });
 }
 
