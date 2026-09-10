@@ -123,6 +123,36 @@ describe('POST /api/cheers', () => {
     assert.match(r.body.error, /not yourself/);
   });
 
+  test('reports an unknown member as a 404, not a server error', async (t) => {
+    const app = createApp();
+    const { alpha } = await pair(app);
+    // Regression: this reached the INSERT and tripped the foreign key. SQLite's
+    // OR IGNORE covers UNIQUE and CHECK but not foreign keys, so it raised and
+    // the route answered 500.
+    t.mock.method(console, 'error', () => {});
+
+    const r = await app.request('POST', '/api/cheers', {
+      body: { toUserId: 9999 },
+      cookie: alpha.cookie,
+    });
+    assert.equal(r.status, 404);
+    assert.match(r.body.error, /no such member/i);
+    assert.equal(console.error.mock.callCount(), 0, 'this is a client error, not an incident');
+  });
+
+  test('a member who has left cannot be cheered', async (t) => {
+    const app = createApp();
+    const { alpha, bravo } = await pair(app);
+    t.mock.method(console, 'error', () => {});
+    await app.db.prepare('DELETE FROM users WHERE id = ?').bind(bravo.user.id).run();
+
+    const r = await app.request('POST', '/api/cheers', {
+      body: { toUserId: bravo.user.id },
+      cookie: alpha.cookie,
+    });
+    assert.equal(r.status, 404);
+  });
+
   for (const [label, body, fragment] of [
     ['a missing target', {}, 'Which member'],
     ['a non-numeric target', { toUserId: 'bravo' }, 'Which member'],
@@ -202,6 +232,16 @@ describe('DELETE /api/cheers/:toUserId', () => {
 
     const r = await app.request('DELETE', `/api/cheers/${bravo.user.id}`, { cookie: alpha.cookie });
     assert.equal(r.body.removed, 1);
+  });
+
+  test('un-cheering an unknown member is a harmless no-op', async () => {
+    const app = createApp();
+    const { alpha } = await pair(app);
+    // DELETE touches no foreign key, so unlike POST this has always been fine
+    // -- pin it so the two routes are not "fixed" into matching by accident.
+    const r = await app.request('DELETE', '/api/cheers/9999', { cookie: alpha.cookie });
+    assert.equal(r.status, 200);
+    assert.equal(r.body.removed, 0);
   });
 
   test('rejects a non-numeric id or a malformed week', async () => {

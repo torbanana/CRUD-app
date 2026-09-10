@@ -20,6 +20,7 @@ import {
   setMeta,
   updateUserProfile,
   upsertEntry,
+  userExists,
 } from './db.js';
 import {
   SESSION_COOKIE,
@@ -261,6 +262,10 @@ async function handlePostCheer(request, env, db, _url, user) {
   // Checked here rather than relying on the CHECK constraint, because
   // INSERT OR IGNORE swallows the violation and reports a silent no-op.
   if (toUser === user.id) return fail(400, 'Cheer someone else, not yourself.');
+  // OR IGNORE does NOT cover this one: SQLite's conflict resolution applies to
+  // UNIQUE and CHECK, not to foreign keys, so an unknown id raises instead of
+  // being ignored. Left to the database it surfaces as a 500.
+  if (!(await userExists(db, toUser))) return fail(404, 'There is no such member.');
 
   const added = await addCheer(db, user.id, toUser, weekStart);
   return json({ added, alreadyCheered: !added });
