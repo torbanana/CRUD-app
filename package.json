@@ -5,6 +5,8 @@
   "type": "module",
   "description": "A weekly step-count race for a group of ten, on Cloudflare Workers + D1",
   "scripts": {
+    "test": "node --test --experimental-test-coverage --test-coverage-include=\"worker/**\" --test-coverage-lines=80 --test-coverage-branches=80 --test-coverage-functions=80 \"test/**/*.test.mjs\"",
+    "test:watch": "node --test --watch \"test/**/*.test.mjs\"",
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
     "seed": "node scripts/seed.mjs",

@@ -227,6 +227,24 @@ Everything except `/api/config`, signup and login requires a session.
 
 `GET /api/week` accepts any date inside a week and resolves it to that Monday.
 
+## Tests
+
+```bash
+npm test          # run the API suite with a coverage report
+npm run test:watch
+```
+
+The suite drives the Worker's exported `fetch` handler directly — real routing,
+real validation, real SQL — against a fresh in-memory database per test. There
+are no test dependencies: it is Node's built-in `node:test` runner over
+`node:sqlite`, which is the same engine D1 runs, so the queries need no
+translation. `test/helpers/d1.mjs` is the whole adapter, and it only bridges
+D1's promise-and-`.bind()` surface onto node:sqlite's synchronous one — it
+reimplements no behaviour, so a test that passes here would pass on D1.
+
+Coverage is enforced at 80% of lines, branches and functions across `worker/`;
+`npm test` fails below that.
+
 ## Layout
 
 ```
@@ -245,6 +263,9 @@ schema.sql     D1 tables
 wrangler.jsonc Worker config, bindings, vars
 scripts/
   seed.mjs     Ten demo members via the HTTP API
+test/
+  helpers/     D1-over-node:sqlite adapter, app harness
+  api.*.test.mjs  One file per route group
 ```
 
 Static files are served by Cloudflare's edge via the `assets` binding, which
