@@ -31,7 +31,12 @@
     "MAX_MEMBERS": "10",
 
     // Password hashing cost. 25000 is chosen to fit the Workers FREE plan's
-    // 10ms CPU limit (~3ms). On the paid plan (5 min CPU) raise this to 600000.
+    // 10ms CPU limit (~3ms). It is BELOW the OWASP figure of 600000 and that is
+    // a real, accepted weakness -- what makes it survivable is that login is now
+    // rate limited (worker/throttle.js), so an attacker gets fifteen guesses in
+    // fifteen minutes rather than as many as the network allows.
+    //
+    // On the paid plan (5 min CPU) raise this to 600000 and delete this excuse.
     // The value is stored inside each hash, so changing it stays backward
     // compatible with existing accounts.
     "PBKDF2_ITERATIONS": "25000"
@@ -40,7 +45,11 @@
   // INVITE_CODE is deliberately NOT here -- it is the only thing protecting your
   // ten places, and this file is committed to a public repo. Set it as a secret:
   //   npx wrangler secret put INVITE_CODE
-  // Without it the Worker falls back to STEP2026, which is public knowledge.
+  //
+  // There is NO production fallback. A deployed Worker without this secret
+  // refuses every signup with a 503 rather than accepting a code printed in a
+  // public repo. `wrangler dev` on localhost still accepts STEP2026, because
+  // there is nothing there to protect.
 
   "observability": {
     "enabled": true

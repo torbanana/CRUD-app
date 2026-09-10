@@ -8,10 +8,12 @@
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
     "seed": "node scripts/seed.mjs",
+    "reset-password": "node scripts/reset-password.mjs",
     "db:create": "wrangler d1 create step-race",
     "db:init": "wrangler d1 execute step-race --file=./schema.sql --local",
     "db:init:remote": "wrangler d1 execute step-race --file=./schema.sql --remote",
-    "db:reset": "wrangler d1 execute step-race --local --command \"DROP TABLE IF EXISTS cheers; DROP TABLE IF EXISTS sessions; DROP TABLE IF EXISTS step_entries; DROP TABLE IF EXISTS users; DROP TABLE IF EXISTS meta;\" && npm run db:init",
+    "db:reset": "wrangler d1 execute step-race --local --command \"DROP TABLE IF EXISTS cheers; DROP TABLE IF EXISTS sessions; DROP TABLE IF EXISTS auth_throttle; DROP TABLE IF EXISTS password_resets; DROP TABLE IF EXISTS step_entries; DROP TABLE IF EXISTS users; DROP TABLE IF EXISTS meta;\" && npm run db:init",
+    "audit": "npm audit --omit=dev",
     "tail": "wrangler tail"
   },
   "devDependencies": {

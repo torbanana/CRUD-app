@@ -11,7 +11,14 @@
 //   .all()    -> { results: [...], meta: {...} }
 //   .run()    -> { meta: { changes, last_row_id, ... } }
 
+// What the signed-in person may see about THEMSELVES.
 const PUBLIC_USER_COLS = 'id, email, name, avatar, weekly_goal, created_at';
+
+// What one member may see about the OTHERS. Email is deliberately absent: the
+// leaderboard needs a name and an avatar, and nothing downstream of listUsers
+// has ever used the address. Not selecting it means a future rendering change
+// cannot accidentally publish nine people's email addresses to the tenth.
+const MEMBER_COLS = 'id, name, avatar, weekly_goal';
 
 // ---------------------------------------------------------------- group config
 
@@ -49,19 +56,58 @@ export function findUserById(db, id) {
   return db.prepare(`SELECT ${PUBLIC_USER_COLS} FROM users WHERE id = ?`).bind(id).first();
 }
 
+/**
+ * The one place that reads a password hash by id, for re-authenticating
+ * someone who is already signed in. Kept separate from findUserById so the
+ * hash never rides along in an object that gets serialised into a response.
+ */
+export function findUserCredentials(db, id) {
+  return db
+    .prepare('SELECT id, email, name, password_hash FROM users WHERE id = ?')
+    .bind(id)
+    .first();
+}
+
 export async function listUsers(db) {
-  const { results } = await db.prepare(`SELECT ${PUBLIC_USER_COLS} FROM users ORDER BY id`).all();
+  const { results } = await db.prepare(`SELECT ${MEMBER_COLS} FROM users ORDER BY id`).all();
   return results;
 }
 
-export async function createUser(db, { email, name, avatar, passwordHash, weeklyGoal = 70000 }) {
-  const info = await db
-    .prepare(
-      'INSERT INTO users(email, name, avatar, password_hash, weekly_goal) VALUES (?, ?, ?, ?, ?)'
-    )
-    .bind(email.toLowerCase().trim(), name.trim(), avatar, passwordHash, weeklyGoal)
-    .run();
-  return findUserById(db, info.meta.last_row_id);
+/**
+ * Create a member, enforcing the group size limit IN THE INSERT.
+ *
+ * The route checks the count first for a friendly error, but a check followed
+ * by an insert is two statements with a gap between them: ten people hitting
+ * signup at once could all pass the check and all get in. The `WHERE (SELECT
+ * COUNT(*) ...) < ?` makes the limit part of the write itself, so the eleventh
+ * insert simply does not happen.
+ *
+ * Returns { user } on success, or { error: 'full' | 'duplicate' }.
+ */
+export async function createUser(
+  db,
+  { email, name, avatar, passwordHash, weeklyGoal = 70000 },
+  maxMembers
+) {
+  let info;
+  try {
+    info = await db
+      .prepare(
+        `INSERT INTO users(email, name, avatar, password_hash, weekly_goal)
+              SELECT ?, ?, ?, ?, ?
+               WHERE (SELECT COUNT(*) FROM users) < ?`
+      )
+      .bind(email.toLowerCase().trim(), name.trim(), avatar, passwordHash, weeklyGoal, maxMembers)
+      .run();
+  } catch (err) {
+    // The UNIQUE index on email is the real guard against duplicate accounts;
+    // the route's lookup beforehand only exists to phrase the error nicely.
+    if (/UNIQUE|constraint/i.test(String(err))) return { error: 'duplicate' };
+    throw err;
+  }
+
+  if (info.meta.changes === 0) return { error: 'full' };
+  return { user: await findUserById(db, info.meta.last_row_id) };
 }
 
 export async function updateUserProfile(db, id, { name, avatar, weeklyGoal }) {
@@ -97,6 +143,89 @@ export function findValidSession(db, token) {
 
 export function deleteSession(db, token) {
   return db.prepare('DELETE FROM sessions WHERE token = ?').bind(token).run();
+}
+
+/** Sign one person out of every device. The lever to pull after a compromise. */
+export async function deleteSessionsForUser(db, userId) {
+  const info = await db.prepare('DELETE FROM sessions WHERE user_id = ?').bind(userId).run();
+  return info.meta.changes;
+}
+
+// ------------------------------------------------------------ password resets
+
+export async function setPasswordHash(db, userId, passwordHash) {
+  const info = await db
+    .prepare('UPDATE users SET password_hash = ? WHERE id = ?')
+    .bind(passwordHash, userId)
+    .run();
+  return info.meta.changes;
+}
+
+/** Mint one. Written by scripts/reset-password.mjs, not by the Worker. */
+export function createPasswordReset(db, tokenHash, userId, expiresAt) {
+  return db
+    .prepare('INSERT INTO password_resets(token_hash, user_id, expires_at) VALUES (?, ?, ?)')
+    .bind(tokenHash, userId, expiresAt)
+    .run();
+}
+
+/** Look at a token without spending it, so the page can say whose link it is. */
+export function peekPasswordReset(db, tokenHash) {
+  return db
+    .prepare(
+      `SELECT r.user_id, u.name, u.email
+         FROM password_resets r
+         JOIN users u ON u.id = r.user_id
+        WHERE r.token_hash = ?
+          AND r.used_at IS NULL
+          AND r.expires_at > datetime('now')`
+    )
+    .bind(tokenHash)
+    .first();
+}
+
+/**
+ * Spend a reset token, atomically.
+ *
+ * Single use is enforced by the UPDATE's own WHERE clause rather than by
+ * reading the row and then writing it: two requests arriving with the same
+ * token race, and exactly one of them matches `used_at IS NULL`. The other
+ * gets no row back and is refused.
+ *
+ * Returns the row (with user_id) on success, or null.
+ */
+export function consumePasswordReset(db, tokenHash) {
+  return db
+    .prepare(
+      `UPDATE password_resets
+          SET used_at = datetime('now')
+        WHERE token_hash = ?
+          AND used_at IS NULL
+          AND expires_at > datetime('now')
+      RETURNING user_id`
+    )
+    .bind(tokenHash)
+    .first();
+}
+
+/** Every other outstanding link for this person dies with the one just used. */
+export async function deletePasswordResetsForUser(db, userId) {
+  const info = await db
+    .prepare('DELETE FROM password_resets WHERE user_id = ?')
+    .bind(userId)
+    .run();
+  return info.meta.changes;
+}
+
+export async function purgeExpiredPasswordResets(db) {
+  const info = await db
+    .prepare(
+      `DELETE FROM password_resets
+        WHERE expires_at <= datetime('now')
+           OR used_at <= datetime('now', '-1 day')`
+    )
+    .run();
+  return info.meta.changes;
 }
 
 export async function purgeExpiredSessions(db) {

@@ -105,6 +105,24 @@
           <div class="avatarpicker" id="profileAvatars"></div>
         </div>
 
+        <details class="pwchange">
+          <summary>Change your password</summary>
+          <div class="field">
+            <label for="currentPassword">Current password</label>
+            <input id="currentPassword" type="password" autocomplete="current-password" />
+          </div>
+          <div class="field">
+            <label for="newPassword">
+              New password <span style="font-weight: 400">(8+ characters)</span>
+            </label>
+            <input id="newPassword" type="password" autocomplete="new-password" minlength="8" />
+          </div>
+          <button class="btn btn--ghost btn--sm" type="button" id="passwordSave">
+            Update password
+          </button>
+          <p class="hint">Signs you out on every other device. You stay signed in here.</p>
+        </details>
+
         <div class="dialog__actions">
           <button class="btn btn--ghost" id="logoutBtn">Sign out</button>
           <button class="btn" id="profileSave">Save</button>

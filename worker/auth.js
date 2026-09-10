@@ -23,9 +23,21 @@
 import { createSession, deleteSession, findUserById, findValidSession } from './db.js';
 
 const DEFAULT_ITERATIONS = 25000;
+const MIN_ITERATIONS = 1000;
+const MAX_ITERATIONS = 1000000;
 const KEY_BITS = 256;
 const SESSION_DAYS = 30;
-export const SESSION_COOKIE = 'sid';
+
+// Two cookie names for one cookie. Over HTTPS we use the __Host- prefix, which
+// the browser itself enforces: it refuses to store the cookie unless it is
+// Secure, Path=/ and has no Domain attribute. That last part is the valuable
+// one -- it means a compromised sibling subdomain cannot overwrite our session
+// cookie, which a plain 'sid' cookie has no defence against. The prefix
+// requires Secure, so `wrangler dev` over plain http falls back to 'sid'.
+export const SESSION_COOKIE = '__Host-sid';
+export const SESSION_COOKIE_INSECURE = 'sid';
+
+const cookieName = (secure) => (secure ? SESSION_COOKIE : SESSION_COOKIE_INSECURE);
 
 const encoder = new TextEncoder();
 
@@ -35,9 +47,11 @@ const toHex = (bytes) =>
 const fromHex = (hex) =>
   new Uint8Array((hex.match(/../g) ?? []).map((pair) => parseInt(pair, 16)));
 
-function iterationsFrom(env) {
+export function iterationsFrom(env) {
   const raw = Number(env.PBKDF2_ITERATIONS);
-  return Number.isInteger(raw) && raw >= 1000 ? raw : DEFAULT_ITERATIONS;
+  return Number.isInteger(raw) && raw >= MIN_ITERATIONS && raw <= MAX_ITERATIONS
+    ? raw
+    : DEFAULT_ITERATIONS;
 }
 
 async function deriveBits(password, salt, iterations) {
@@ -83,7 +97,12 @@ export async function verifyPassword(password, stored) {
   if (scheme !== 'pbkdf2' || !iterStr || !saltHex || !keyHex) return false;
 
   const iterations = Number(iterStr);
-  if (!Number.isInteger(iterations) || iterations < 1 || iterations > 1000000) return false;
+  // Floor as well as ceiling. Nothing can currently write a hash below the
+  // floor, but if anything ever did -- a bad import, a hand-edited row -- we
+  // refuse it outright rather than cheerfully verifying against a 1-round KDF.
+  if (!Number.isInteger(iterations) || iterations < MIN_ITERATIONS || iterations > MAX_ITERATIONS) {
+    return false;
+  }
 
   const expected = fromHex(keyHex);
   const actual = await deriveBits(password, fromHex(saltHex), iterations);
@@ -100,22 +119,75 @@ export async function startSession(db, userId, { secure = true } = {}) {
   // SQLite compares datetimes as strings, so store the same shape it produces.
   await createSession(db, token, userId, expires.toISOString().replace('T', ' ').slice(0, 19));
 
+  // SameSite=Strict rather than Lax. Lax still attaches the cookie to top-level
+  // GET navigations from other sites, which is what you want for an app people
+  // link into; nobody deep-links into a private step tracker, so we take the
+  // stricter setting and close that gap entirely.
   const parts = [
-    `${SESSION_COOKIE}=${token}`,
+    `${cookieName(secure)}=${token}`,
     'Path=/',
     'HttpOnly',
-    'SameSite=Lax',
+    'SameSite=Strict',
     `Expires=${expires.toUTCString()}`,
   ];
   if (secure) parts.push('Secure');
   return parts.join('; ');
 }
 
-export async function endSession(db, token, { secure = true } = {}) {
-  if (token) await deleteSession(db, token);
-  const parts = [`${SESSION_COOKIE}=`, 'Path=/', 'HttpOnly', 'SameSite=Lax', 'Max-Age=0'];
-  if (secure) parts.push('Secure');
-  return parts.join('; ');
+/**
+ * End every session the request presented, and clear BOTH cookie names.
+ *
+ * Clearing only the current name is not enough. An instance upgraded from the
+ * plain 'sid' cookie can have both in the browser at once: the new login sets
+ * __Host-sid, the old sid is still sitting there, and its token is still live
+ * in the sessions table. Clear one and getSessionUser falls straight back to
+ * the other -- logout would report success and sign nobody out.
+ *
+ * Returns an array of Set-Cookie values; the caller appends them all.
+ */
+export async function endSession(db, tokens, { secure = true } = {}) {
+  const list = [...new Set((Array.isArray(tokens) ? tokens : [tokens]).filter(Boolean))];
+  await Promise.all(list.map((token) => deleteSession(db, token)));
+
+  return [SESSION_COOKIE, SESSION_COOKIE_INSECURE].map((name) => {
+    const parts = [`${name}=`, 'Path=/', 'HttpOnly', 'SameSite=Strict', 'Max-Age=0'];
+    if (secure) parts.push('Secure');
+    return parts.join('; ');
+  });
+}
+
+/**
+ * Compare two secrets without leaking their contents or their length through
+ * timing. Hashing first gives both sides a fixed 32-byte width, so the
+ * comparison below runs for the same time whatever the inputs were. Used for
+ * the invite code, where a plain `!==` would in principle leak the code one
+ * character at a time.
+ */
+export async function secretsMatch(a, b) {
+  const [ha, hb] = await Promise.all([
+    crypto.subtle.digest('SHA-256', encoder.encode(String(a))),
+    crypto.subtle.digest('SHA-256', encoder.encode(String(b))),
+  ]);
+  return timingSafeEqual(new Uint8Array(ha), new Uint8Array(hb));
+}
+
+// -------------------------------------------------------------- reset tokens
+
+/**
+ * SHA-256 of a password-reset token, lowercase hex. The database stores this
+ * and never the token itself, so a leaked dump contains no usable links.
+ *
+ * A plain digest is right here where a password needs PBKDF2: the token is 32
+ * bytes of CSPRNG output, so there is no small search space to slow an
+ * attacker down within. What matters instead is that lookup stays a single
+ * indexed read, which a per-row salt would rule out.
+ *
+ * scripts/reset-password.mjs computes the same digest with node:crypto. The
+ * two must agree exactly -- UTF-8 bytes, SHA-256, lowercase hex.
+ */
+export async function hashToken(token) {
+  const digest = await crypto.subtle.digest('SHA-256', encoder.encode(String(token)));
+  return toHex(new Uint8Array(digest));
 }
 
 // ------------------------------------------------------------ request helpers
@@ -127,7 +199,16 @@ export function parseCookies(request) {
     const eq = part.indexOf('=');
     if (eq === -1) continue;
     const key = part.slice(0, eq).trim();
-    if (key) out[key] = decodeURIComponent(part.slice(eq + 1).trim());
+    if (!key) continue;
+    const raw = part.slice(eq + 1).trim();
+    // A malformed escape (`sid=%`) makes decodeURIComponent throw. That is a
+    // bad cookie, not a server fault, so keep the raw value and let the lookup
+    // miss -- otherwise one junk request header becomes a 500.
+    try {
+      out[key] = decodeURIComponent(raw);
+    } catch {
+      out[key] = raw;
+    }
   }
   return out;
 }
@@ -138,7 +219,10 @@ export function parseCookies(request) {
  * proceed without it.
  */
 export async function getSessionUser(db, request) {
-  const token = parseCookies(request)[SESSION_COOKIE];
+  const cookies = parseCookies(request);
+  // Accept either name: over HTTPS the browser sends __Host-sid, and a session
+  // issued before this change (or by `wrangler dev`) is still called sid.
+  const token = cookies[SESSION_COOKIE] || cookies[SESSION_COOKIE_INSECURE];
   if (!token) return null;
   const session = await findValidSession(db, token);
   if (!session) return null;

@@ -37,6 +37,10 @@
             <input id="loginPassword" type="password" autocomplete="current-password" required />
           </div>
           <button class="btn btn--block" type="submit" id="loginSubmit">Sign in</button>
+          <p class="hint">
+            Forgotten it? Ask whoever set up this group — they can send you a
+            one-time link to set a new one.
+          </p>
         </form>
 
         <!-- join -->
@@ -68,100 +72,6 @@
       </div>
     </div>
 
-    <script type="module">
-      import { api } from '/js/api.js';
-
-      const el = (id) => document.getElementById(id);
-      const errorBox = el('error');
-
-      let chosenAvatar = null;
-
-      function showError(message) {
-        errorBox.textContent = message;
-        errorBox.hidden = !message;
-      }
-
-      function selectTab(which) {
-        const joining = which === 'join';
-        el('tabLogin').setAttribute('aria-selected', String(!joining));
-        el('tabJoin').setAttribute('aria-selected', String(joining));
-        el('loginForm').hidden = joining;
-        el('joinForm').hidden = !joining;
-        showError('');
-      }
-
-      el('tabLogin').addEventListener('click', () => selectTab('login'));
-      el('tabJoin').addEventListener('click', () => selectTab('join'));
-
-      // Load group details so the page can name the group and say whether
-      // there is still room to join.
-      try {
-        const config = await api.config();
-        el('groupName').textContent = config.groupName;
-        el('groupSub').textContent = `A weekly step race for ${config.maxMembers} people`;
-
-        for (const emoji of config.avatars) {
-          const button = document.createElement('button');
-          button.type = 'button';
-          button.textContent = emoji;
-          button.setAttribute('aria-pressed', 'false');
-          button.addEventListener('click', () => {
-            chosenAvatar = emoji;
-            for (const other of el('avatarPicker').children) {
-              other.setAttribute('aria-pressed', String(other === button));
-            }
-          });
-          el('avatarPicker').append(button);
-        }
-
-        if (config.full) {
-          el('tabJoin').disabled = true;
-          el('tabJoin').title = `The group is full (${config.maxMembers} members)`;
-          el('demoNote').hidden = false;
-          el('demoNote').innerHTML =
-            `All ${config.maxMembers} places are taken. If this is the demo data, sign in as ` +
-            `<code>aisyah@example.com</code> with password <code>password123</code>.`;
-        }
-      } catch {
-        showError('Could not reach the server. Is it running?');
-      }
-
-      el('loginForm').addEventListener('submit', async (event) => {
-        event.preventDefault();
-        showError('');
-        el('loginSubmit').disabled = true;
-        try {
-          await api.login({
-            email: el('loginEmail').value,
-            password: el('loginPassword').value,
-          });
-          location.href = '/';
-        } catch (err) {
-          showError(err.message);
-          el('loginSubmit').disabled = false;
-        }
-      });
-
-      el('joinForm').addEventListener('submit', async (event) => {
-        event.preventDefault();
-        showError('');
-        if (!chosenAvatar) return showError('Pick a runner to represent you on the track.');
-
-        el('joinSubmit').disabled = true;
-        try {
-          await api.signup({
-            name: el('joinName').value,
-            email: el('joinEmail').value,
-            password: el('joinPassword').value,
-            inviteCode: el('joinInvite').value.trim(),
-            avatar: chosenAvatar,
-          });
-          location.href = '/';
-        } catch (err) {
-          showError(err.message);
-          el('joinSubmit').disabled = false;
-        }
-      });
-    </script>
+    <script type="module" src="/js/login.js"></script>
   </body>
 </html>

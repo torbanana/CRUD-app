@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Set a new password - Step Race</title>
+    <link rel="stylesheet" href="/css/style.css" />
+    <link
+      rel="icon"
+      href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🏁</text></svg>"
+    />
+  </head>
+  <body>
+    <div class="authpage">
+      <div class="authcard">
+        <div class="authcard__brand">
+          <div class="flag">🏁</div>
+          <h1>Set a new password</h1>
+          <p id="resetSub">Checking your link…</p>
+        </div>
+
+        <p class="formerror" id="error" hidden></p>
+
+        <form id="resetForm" hidden>
+          <div class="field">
+            <label for="newPassword">
+              New password <span style="font-weight: 400">(8+ characters)</span>
+            </label>
+            <input id="newPassword" type="password" autocomplete="new-password" minlength="8" required />
+          </div>
+          <div class="field">
+            <label for="confirmPassword">Confirm new password</label>
+            <input
+              id="confirmPassword"
+              type="password"
+              autocomplete="new-password"
+              minlength="8"
+              required
+            />
+          </div>
+          <button class="btn btn--block" type="submit" id="resetSubmit">
+            Set password and sign in
+          </button>
+          <p class="hint">
+            This signs you out on every other device, and the link stops working once
+            you use it.
+          </p>
+        </form>
+
+        <p class="hint" id="resetHelp" hidden>
+          Ask whoever set up this group for a new link.
+        </p>
+      </div>
+    </div>
+
+    <script type="module" src="/js/reset.js"></script>
+  </body>
+</html>

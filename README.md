@@ -22,12 +22,48 @@ npm run seed        # optional: ten demo members, two weeks of steps
 `npm run dev` is `wrangler dev`, which runs the real Workers runtime and a real
 local SQLite database on your machine — no Cloudflare account needed to develop.
 
-Demo accounts are `aisyah@example.com` … `jonas@example.com`, all with the
-password `password123`. `npm run db:reset` drops the local tables and recreates
-them.
+Demo accounts are `aisyah@example.com` … `jonas@example.com`. They share one
+password, which `npm run seed` generates freshly each run and prints once — it
+is not stored anywhere, so re-seed if you lose it. `npm run db:reset` drops the
+local tables and recreates them.
+
+`seed.mjs` refuses to run against anything but a local address unless you pass
+`--allow-remote`. It creates ten accounts with a shared password; doing that to
+a live group fills its ten places with fake members.
 
 For your real group: skip the seed, and have everyone visit the deployed URL and
 pick **Join the group**. They'll need the invite code.
+
+## Forgotten passwords
+
+Someone signed in can change their own password from the profile dialog — the
+🙂 button, then **Change your password**. It asks for the current one, and it
+signs them out on every other device.
+
+Someone locked *out* has to ask you, because there is no mail provider here and
+adding one would mean a third-party account, an API key and a verified sender
+domain for a group of ten. Mint them a link instead:
+
+```bash
+npm run reset-password -- --email ben@example.com
+
+# against production
+npm run reset-password -- --email ben@example.com \
+    --remote --base https://step-race.<your-subdomain>.workers.dev
+```
+
+It prints a one-time link. Send it over whatever you already use to talk to
+each other. It expires in an hour (`--minutes` to change that), works once, and
+using it signs that person out everywhere and kills any other link they had
+outstanding. Only the link's SHA-256 is stored, so if you lose it, run the
+command again — which also invalidates the one you lost.
+
+The token travels in the URL *fragment* (`/reset#…`), which browsers never send
+to a server, so it stays out of request logs and out of Cloudflare's traces.
+The page reads it and posts it in a body.
+
+This does not scale, and it is not meant to. For ten people it is a text
+message.
 
 ## Deploying
 
@@ -41,7 +77,7 @@ npx wrangler d1 create step-race         # prints a database_id
 Paste that `database_id` into `wrangler.jsonc`, then:
 
 ```bash
-npx wrangler secret put INVITE_CODE      # choose your group's code
+npx wrangler secret put INVITE_CODE      # REQUIRED — signup is closed without it
 npm run db:init:remote                   # create the tables in production
 npm run deploy
 ```
@@ -50,6 +86,15 @@ That prints your URL — `https://step-race.<your-subdomain>.workers.dev`. Send 
 to your nine people.
 
 `npm run tail` streams live logs.
+
+Before you send that URL to anyone, walk the checklist in
+[SECURITY.md](SECURITY.md) — it is six commands and it is the difference between
+a private group and a public one.
+
+> **Upgrading an instance deployed before the hardening changes?** Re-run
+> `npm run db:init:remote`. It is idempotent, and it adds the two new tables:
+> `auth_throttle`, which rate limiting needs, and `password_resets`. Without
+> the first, every login returns a 500.
 
 ### What this costs
 
@@ -104,8 +149,14 @@ npx wrangler secret put INVITE_CODE          # production
 echo 'INVITE_CODE=whatever' > .dev.vars      # local dev (gitignored)
 ```
 
-If it is never set the Worker falls back to `STEP2026`, which is written in this
-public README and therefore protects nothing. Set it.
+There is **no production fallback**. A deployed Worker without this secret
+refuses every signup with a 503 rather than accepting a code printed in a public
+repo. `wrangler dev` on localhost still accepts `STEP2026`, so `npm run seed`
+keeps working; nothing on localhost is worth protecting.
+
+The practical consequence: if you deploy and nobody can join, you forgot the
+secret. That is the intended failure — the alternative was a group anyone on the
+internet could walk into.
 
 `APP_TZ` matters more than it looks. A Worker runs in whichever datacentre is
 nearest the visitor, so there is no meaningful "server timezone" to inherit —
@@ -153,7 +204,14 @@ and ignores any id in the request body, so "write to someone else's day" is not
 expressible, crafted request or not.
 
 Everything else is deliberately equal: any member can change the group's shared
-goal, because a group of ten does not need an admin.
+goal and the group's name, because a group of ten does not need an admin. This
+is a real trade — one member can rename the group for everyone, and nothing logs
+who did it. It is fine among ten people who know each other and wrong the moment
+that stops being true. See [SECURITY.md](SECURITY.md).
+
+Getting *in* is a different matter, and is defended properly: see
+[SECURITY.md](SECURITY.md) for the invite code, rate limiting, session and
+header policy.
 
 ## The features, and why they exist
 
@@ -211,13 +269,17 @@ Wednesday stops opening it. Most of these features target one of those.
 
 ## API
 
-Everything except `/api/config`, signup and login requires a session.
+Everything except `/api/config`, signup, login and the two reset routes
+requires a session.
 
 | Method | Path | Purpose |
 | --- | --- | --- |
 | `GET` | `/api/config` | Group name, size, avatar list (public; never the invite code) |
 | `POST` | `/api/auth/signup` | Join, with invite code |
 | `POST` | `/api/auth/login` / `logout` | Session in, session out |
+| `POST` | `/api/auth/reset/check` | Is this reset link still good, and whose is it? |
+| `POST` | `/api/auth/reset` | Spend a reset link, set a password, sign in |
+| `POST` | `/api/auth/change-password` | Rotate your own password (needs the current one) |
 | `GET` / `PATCH` | `/api/me` | Your profile, avatar and weekly goal |
 | `GET` | `/api/week?week=YYYY-MM-DD` | **The one read.** Everything the UI renders, for that week |
 | `PUT` | `/api/entries` | Log or correct one of *your* days |
@@ -231,20 +293,25 @@ Everything except `/api/config`, signup and login requires a session.
 
 ```
 worker/
-  index.js     Router, routes, validation
+  index.js     Router, routes, validation, CSRF + security headers
   db.js        Every D1 query
-  auth.js      PBKDF2 hashing, sessions, session lookup
+  auth.js      PBKDF2 hashing, sessions, reset-token hashing
+  throttle.js  Login / invite-code brute-force rate limiting
   week.js      Timezone-aware week maths (pure)
   weekview.js  Builds the payload GET /api/week returns
 public/
   login.html   Sign in / join
+  reset.html   Set a new password from a one-time link
   index.html   The app
-  js/          api.js, track.js, app.js
+  js/          api.js, track.js, app.js, login.js, reset.js
   css/
+  _headers     Security headers for edge-served static files
 schema.sql     D1 tables
 wrangler.jsonc Worker config, bindings, vars
+SECURITY.md    Threat model and the pre-deploy checklist
 scripts/
-  seed.mjs     Ten demo members via the HTTP API
+  seed.mjs             Ten demo members via the HTTP API
+  reset-password.mjs   Mint a one-time reset link for one member
 ```
 
 Static files are served by Cloudflare's edge via the `assets` binding, which

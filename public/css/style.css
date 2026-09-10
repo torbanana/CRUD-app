@@ -1107,6 +1107,31 @@ dialog::backdrop {
   display: none;
 }
 
+/* Password change, folded away inside the profile dialog. Collapsed by
+   default because rotating a password is rare and the dialog's real job is
+   your name, goal and runner. */
+.pwchange {
+  margin-top: 4px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+
+.pwchange summary {
+  cursor: pointer;
+  font-size: 12.5px;
+  font-weight: 650;
+  color: var(--muted);
+  margin-bottom: 14px;
+}
+
+.pwchange summary:hover {
+  color: var(--text);
+}
+
+.pwchange .hint {
+  margin: 8px 0 0;
+}
+
 /* --------------------------------------------------------- login page */
 
 .authpage {

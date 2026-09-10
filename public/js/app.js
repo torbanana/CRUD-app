@@ -361,6 +361,29 @@ function openProfileDialog() {
     }
   };
 
+  // Never leave a typed password sitting in the DOM from a previous open.
+  el('currentPassword').value = '';
+  el('newPassword').value = '';
+
+  el('passwordSave').onclick = async () => {
+    el('profileError').hidden = true;
+    el('passwordSave').disabled = true;
+    try {
+      // The server replaces the session cookie as part of this, so we stay
+      // signed in here while every other device is dropped.
+      await api.changePassword(el('currentPassword').value, el('newPassword').value);
+      el('currentPassword').value = '';
+      el('newPassword').value = '';
+      el('profileDialog').close();
+      toast('Password updated. Other devices have been signed out.');
+    } catch (err) {
+      el('profileError').textContent = err.message;
+      el('profileError').hidden = false;
+    } finally {
+      el('passwordSave').disabled = false;
+    }
+  };
+
   el('profileDialog').showModal();
 }
 

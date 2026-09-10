@@ -36,6 +36,12 @@ export const api = {
   me: () => request('GET', '/api/me'),
   updateMe: (patch) => request('PATCH', '/api/me', patch),
 
+  // Password reset. The token goes in the body, never the URL -- see reset.js.
+  resetCheck: (token) => request('POST', '/api/auth/reset/check', { token }),
+  resetPassword: (token, password) => request('POST', '/api/auth/reset', { token, password }),
+  changePassword: (currentPassword, newPassword) =>
+    request('POST', '/api/auth/change-password', { currentPassword, newPassword }),
+
   week: (weekStart) =>
     request('GET', weekStart ? `/api/week?week=${encodeURIComponent(weekStart)}` : '/api/week'),
 

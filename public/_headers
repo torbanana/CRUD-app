@@ -1,0 +1,31 @@
+# Response headers for the static pages.
+#
+# Cloudflare serves everything in this directory straight from its edge without
+# invoking the Worker, so headers set in worker/index.js never reach index.html
+# or login.html. This file is how they get there. Wrangler consumes it at
+# deploy time; it is not itself served.
+#
+# worker/index.js has a matching PAGE_CSP constant for the fall-through case
+# where the Worker does serve an asset. Change one, change the other.
+#
+# VERIFY AFTER DEPLOYING -- a policy you assume is applied is worse than none:
+#   curl -sSI https://<your-worker>.workers.dev/login | grep -i content-security
+
+/*
+  Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; font-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: no-referrer
+  X-Frame-Options: DENY
+  Permissions-Policy: geolocation=(), camera=(), microphone=(), payment=(), usb=()
+  Cross-Origin-Opener-Policy: same-origin
+  Cross-Origin-Resource-Policy: same-origin
+  Strict-Transport-Security: max-age=31536000; includeSubDomains
+
+# The two HTML entry points must not be held by a shared cache: revalidate
+# every time so a deploy takes effect and no proxy keeps a stale shell.
+/
+  Cache-Control: no-cache
+/index.html
+  Cache-Control: no-cache
+/login.html
+  Cache-Control: no-cache
