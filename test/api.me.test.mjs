@@ -75,6 +75,23 @@ describe('PATCH /api/me', () => {
     });
   }
 
+  test('rejects a goal that is not a number instead of coercing it', async () => {
+    const app = createApp();
+    const { cookie } = await signUp(app);
+    for (const weeklyGoal of [true, [], ['70000'], '', null, {}, '70000x']) {
+      const r = await app.request('PATCH', '/api/me', { body: { weeklyGoal }, cookie });
+      assert.equal(r.status, 400, `weeklyGoal: ${JSON.stringify(weeklyGoal)} should be rejected`);
+    }
+  });
+
+  test('still accepts a goal sent as a numeric string', async () => {
+    const app = createApp();
+    const { cookie } = await signUp(app);
+    const r = await app.request('PATCH', '/api/me', { body: { weeklyGoal: '84000' }, cookie });
+    assert.equal(r.status, 200);
+    assert.equal(r.body.user.weekly_goal, 84000);
+  });
+
   test('accepts the exact boundaries of the goal range', async () => {
     const app = createApp();
     const { cookie } = await signUp(app);

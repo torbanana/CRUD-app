@@ -112,6 +112,34 @@ describe('POST /api/cheers', () => {
     assert.equal(asBravo.body.members.find((m) => m.name === 'Bravo').cheeredByMe, false);
   });
 
+  test('rejects a target that is not a number instead of coercing it', async () => {
+    const app = createApp();
+    const alpha = await signUp(app, { name: 'Alpha' });
+    await signUp(app, { name: 'Bravo' });
+
+    // Regression: Number(true) is 1, so `{"toUserId": true}` cheered whoever
+    // happened to be member 1 -- a real cheer, aimed at nobody in particular.
+    for (const toUserId of [true, [], [2], '', '   ', null, {}, '2x']) {
+      const r = await app.request('POST', '/api/cheers', { body: { toUserId }, cookie: alpha.cookie });
+      assert.equal(r.status, 400, `toUserId: ${JSON.stringify(toUserId)} should be rejected`);
+      assert.match(r.body.error, /Which member/);
+    }
+
+    const { n } = await app.db.prepare('SELECT COUNT(*) AS n FROM cheers').first();
+    assert.equal(n, 0, 'no rejected value should have cheered anyone');
+  });
+
+  test('still accepts a target sent as a numeric string', async () => {
+    const app = createApp();
+    const { alpha, bravo } = await pair(app);
+    const r = await app.request('POST', '/api/cheers', {
+      body: { toUserId: String(bravo.user.id) },
+      cookie: alpha.cookie,
+    });
+    assert.equal(r.status, 200);
+    assert.equal(r.body.added, true);
+  });
+
   test('refuses self-congratulation', async () => {
     const app = createApp();
     const { alpha } = await pair(app);

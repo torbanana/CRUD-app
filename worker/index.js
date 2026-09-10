@@ -76,6 +76,25 @@ async function readJson(request) {
 }
 
 /**
+ * Read a whole number out of a request field.
+ *
+ * Number() is far too generous to validate with: it maps true to 1, and null,
+ * '' and [] to 0. Each of those then satisfies Number.isInteger and gets
+ * stored as though the client had meant it -- `{"steps": []}` logging a zero
+ * day is a silent wrong answer, not a rejected request.
+ *
+ * So accept only a real number, or a string that is entirely a number (path
+ * segments and query parameters arrive as strings and are legitimate).
+ * Anything else returns null, which every caller treats as invalid.
+ */
+function toInteger(value) {
+  if (typeof value === 'number') return Number.isInteger(value) ? value : null;
+  if (typeof value !== 'string' || value.trim() === '') return null;
+  const parsed = Number(value);
+  return Number.isInteger(parsed) ? parsed : null;
+}
+
+/**
  * Resolve a ?week= value into a Monday. Any date inside the week works, so
  * '2026-09-10' and '2026-09-07' both mean the same week. Returns null if the
  * value is present but not a real date.
@@ -199,8 +218,8 @@ async function handlePatchMe(request, _env, db, _url, user) {
     patch.avatar = avatar;
   }
   if (weeklyGoal !== undefined) {
-    const goal = Number(weeklyGoal);
-    if (!Number.isInteger(goal) || goal < 7000 || goal > 700000) {
+    const goal = toInteger(weeklyGoal);
+    if (goal === null || goal < 7000 || goal > 700000) {
       return fail(400, 'Pick a weekly goal between 7,000 and 700,000 steps.');
     }
     patch.weeklyGoal = goal;
@@ -234,8 +253,8 @@ async function handlePutEntry(request, env, db, _url, user) {
     return fail(400, 'You cannot log steps for a day that has not happened yet.');
   }
 
-  const count = Number(steps);
-  if (!Number.isInteger(count) || count < 0) {
+  const count = toInteger(steps);
+  if (count === null || count < 0) {
     return fail(400, 'Steps must be a whole number, zero or more.');
   }
   if (count > MAX_STEPS_PER_DAY) {
@@ -253,10 +272,10 @@ async function handleDeleteEntry(_request, _env, db, _url, user, params) {
 async function handlePostCheer(request, env, db, _url, user) {
   const body = await readJson(request);
   const { tz } = config(env);
-  const toUser = Number(body.toUserId);
+  const toUser = toInteger(body.toUserId);
   const weekStart = resolveWeek(body.week, tz);
 
-  if (!Number.isInteger(toUser)) return fail(400, 'Which member do you want to cheer?');
+  if (toUser === null) return fail(400, 'Which member do you want to cheer?');
   if (!weekStart) return fail(400, 'That is not a valid date.');
   // Checked here rather than relying on the CHECK constraint, because
   // INSERT OR IGNORE swallows the violation and reports a silent no-op.
@@ -268,10 +287,10 @@ async function handlePostCheer(request, env, db, _url, user) {
 
 async function handleDeleteCheer(_request, env, db, url, user, params) {
   const { tz } = config(env);
-  const toUser = Number(params.toUserId);
+  const toUser = toInteger(params.toUserId);
   const weekStart = resolveWeek(url.searchParams.get('week'), tz);
 
-  if (!Number.isInteger(toUser)) return fail(400, 'Which member do you want to un-cheer?');
+  if (toUser === null) return fail(400, 'Which member do you want to un-cheer?');
   if (!weekStart) return fail(400, 'That is not a valid date.');
   return json({ removed: await removeCheer(db, user.id, toUser, weekStart) });
 }
@@ -295,8 +314,8 @@ async function handlePatchGroup(request, _env, db) {
     writes.push(setMeta(db, 'group_name', groupName.trim()));
   }
   if (journeyGoalSteps !== undefined) {
-    const goal = Number(journeyGoalSteps);
-    if (!Number.isInteger(goal) || goal < 10000 || goal > 20000000) {
+    const goal = toInteger(journeyGoalSteps);
+    if (goal === null || goal < 10000 || goal > 20000000) {
       return fail(400, 'Pick a group goal between 10,000 and 20,000,000 steps.');
     }
     writes.push(setMeta(db, 'journey_goal_steps', goal));

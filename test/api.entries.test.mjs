@@ -114,6 +114,37 @@ describe('PUT /api/entries', () => {
     });
   }
 
+  test('rejects values that are not numbers instead of coercing them', async () => {
+    const app = createApp();
+    const { cookie } = await signUp(app);
+
+    // Regression: Number() mapped all of these onto a whole number that then
+    // satisfied Number.isInteger, so the day was logged as if the client had
+    // meant it -- true became 1 step, [] and '' became a zero day.
+    for (const steps of [true, false, [], [5], '', '   ', null, {}, '5px', '1e3x']) {
+      const r = await app.request('PUT', '/api/entries', {
+        body: { date: PAST_DATES[0], steps },
+        cookie,
+      });
+      assert.equal(r.status, 400, `steps: ${JSON.stringify(steps)} should be rejected`);
+      assert.match(r.body.error, /whole number/);
+    }
+
+    const { n } = await app.db.prepare('SELECT COUNT(*) AS n FROM step_entries').first();
+    assert.equal(n, 0, 'no rejected value should have been written');
+  });
+
+  test('still accepts a step count sent as a numeric string', async () => {
+    const app = createApp();
+    const { cookie } = await signUp(app);
+    const r = await app.request('PUT', '/api/entries', {
+      body: { date: PAST_DATES[0], steps: '4200' },
+      cookie,
+    });
+    assert.equal(r.status, 200);
+    assert.equal(r.body.entry.steps, 4200);
+  });
+
   test('writes to the session user, ignoring any id in the body', async () => {
     const app = createApp();
     const victim = await signUp(app, { name: 'Victim' });
