@@ -208,6 +208,36 @@ describe('GET /api/me', () => {
     assert.equal((await app.request('GET', '/api/me', { cookie })).status, 401);
   });
 
+  test('treats an undecodable cookie as no session, not a server error', async () => {
+    const app = createApp();
+    // A cookie value is whatever the client sent; it need not be valid
+    // percent-encoding. Regression: decodeURIComponent threw and every route
+    // answered 500, with no session needed to trigger it.
+    for (const cookie of ['sid=%', 'sid=%E0%A4%A', 'sid=100%', 'theme=%zz; sid=abc']) {
+      const r = await app.request('GET', '/api/me', { cookie });
+      assert.equal(r.status, 401, `${cookie} should be a 401`);
+      assert.match(r.body.error, /sign in/);
+    }
+  });
+
+  test('an undecodable cookie does not break public or logout routes', async () => {
+    const app = createApp();
+    assert.equal((await app.request('GET', '/api/config', { cookie: 'sid=%' })).status, 200);
+    assert.equal((await app.request('POST', '/api/auth/logout', { cookie: 'sid=%' })).status, 200);
+  });
+
+  test('still decodes a cookie that is validly encoded', async () => {
+    const app = createApp();
+    const { cookie } = await signUp(app);
+    const token = cookie.slice('sid='.length);
+    // Tolerating bad encoding must not mean giving up on good encoding: a
+    // value the client percent-encoded still has to decode back to the token.
+    const encoded = `sid=${token.replace(/^./, (c) => `%${c.charCodeAt(0).toString(16)}`)}`;
+
+    assert.notEqual(encoded, cookie, 'the test cookie should actually be encoded');
+    assert.equal((await app.request('GET', '/api/me', { cookie: encoded })).status, 200);
+  });
+
   test('ignores unrelated cookies alongside the session', async () => {
     const app = createApp();
     const { cookie } = await signUp(app);
