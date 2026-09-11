@@ -49,6 +49,10 @@ export function findUserById(db, id) {
   return db.prepare(`SELECT ${PUBLIC_USER_COLS} FROM users WHERE id = ?`).bind(id).first();
 }
 
+export async function userExists(db, id) {
+  return (await db.prepare('SELECT 1 AS ok FROM users WHERE id = ?').bind(id).first()) !== null;
+}
+
 export async function listUsers(db) {
   const { results } = await db.prepare(`SELECT ${PUBLIC_USER_COLS} FROM users ORDER BY id`).all();
   return results;
