@@ -88,6 +88,27 @@ describe('PATCH /api/group', () => {
     });
   }
 
+  test('rejects a goal that is not a number instead of coercing it', async () => {
+    const app = createApp();
+    const { cookie } = await signUp(app);
+    for (const journeyGoalSteps of [true, [], ['750000'], '', null, {}, '750000x']) {
+      const r = await app.request('PATCH', '/api/group', { body: { journeyGoalSteps }, cookie });
+      assert.equal(r.status, 400, `${JSON.stringify(journeyGoalSteps)} should be rejected`);
+    }
+    assert.equal(
+      (await app.request('PATCH', '/api/group', { body: {}, cookie })).body.meta.journey_goal_steps,
+      '750000'
+    );
+  });
+
+  test('still accepts a goal sent as a numeric string', async () => {
+    const app = createApp();
+    const { cookie } = await signUp(app);
+    const r = await app.request('PATCH', '/api/group', { body: { journeyGoalSteps: '650000' }, cookie });
+    assert.equal(r.status, 200);
+    assert.equal(r.body.meta.journey_goal_steps, '650000');
+  });
+
   test('settings survive and are visible to everyone', async () => {
     const app = createApp();
     const first = await signUp(app);
